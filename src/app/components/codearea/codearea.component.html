@@ -1,0 +1,9 @@
+<div class=" h-screen">
+    <ngx-monaco-editor 
+    [options]="editorOptions" 
+    [(ngModel)]="code" 
+    class="caret-pink-500"
+    (ngModelChange)="output()"
+    >
+    </ngx-monaco-editor>
+</div>
