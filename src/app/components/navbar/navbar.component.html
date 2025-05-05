@@ -3,7 +3,20 @@
         CODESHARE
         <span class="text-blue-400 absolute -top-2">+</span>
     </div>
-    <div class="px-3 flex items-center">
+    <div class="px-3 flex items-center gap-6">
+        
+
+        @if (isconnected) {
+            <p-message severity="success" class="flex items-center">
+                <p>Connected</p>
+            </p-message>
+        } @else {
+            <p-message styleClass="h-full" class="flex items-center justify-center">
+                <p>Connecting</p>    
+                <lucide-icon [name]="loader" class="animate-spin h-4"></lucide-icon>
+            </p-message>
+        }
+        
         <p-toggle-switch></p-toggle-switch>
     </div>
 </div>
