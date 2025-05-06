@@ -1,4 +1,9 @@
 <div class=" h-screen">
-    <ngx-monaco-editor [options]="editorOptions" [(ngModel)]="code" (ngModelChange)="onTextChange()">
+    <ngx-monaco-editor 
+        [options]="editorOptions" 
+        [ngModel]="code" 
+        (ngModelChange)="onTextChange()"
+        (init)="onEditorInit($event)"
+        >
     </ngx-monaco-editor>
 </div>

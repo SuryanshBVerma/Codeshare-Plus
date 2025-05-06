@@ -2,6 +2,7 @@ import { Injectable } from '@angular/core';
 import { Client, Stomp, IMessage } from '@stomp/stompjs';
 import SockJS from 'sockjs-client';
 import { BehaviorSubject, Observable } from 'rxjs';
+import { HttpClient } from '@angular/common/http'; // Import HttpClient
 
 export interface ChatMessage {
   sender: string;
@@ -15,9 +16,11 @@ export interface ChatMessage {
 export class WebsocketService {
 
   username = "default";
-  private roomMessages = new BehaviorSubject<any>(null);
-  private userId: string = this.generateUserId();
+  // private roomMessages = new BehaviorSubject<any>(null);
+  private userId: string = this.generateUserId(); // Ip Address
+  private clientIpAddress: string | null = null; // Client IP address
   private currentRoomId: string | null = null;
+
   private codeUpdateSubject = new BehaviorSubject<string>('');
   private roomMessagesSubject = new BehaviorSubject<any>(null);
   private connectionStatusSubject = new BehaviorSubject<boolean>(false);
@@ -31,21 +34,41 @@ export class WebsocketService {
   });
 
 
-  constructor() {
-
+  constructor(
+    private http: HttpClient, // Inject HttpClient
+  ) {
     this.currentRoomId = location.pathname.replace("/", "");
+    this.fetchClientIpAddress().then(() => {
+      console.log('IP Address fetched successfully');
+    }).catch((error) => {
+      console.error('Error fetching IP Address:', error);
+    });
+  }
 
+  public fetchClientIpAddress(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      this.http.get('https://api.ipify.org?format=json').subscribe(
+        (response: any) => {
+          this.clientIpAddress = response.ip;
+          console.log('Client IP Address:', this.clientIpAddress); // Debug log
+          resolve(); // Resolve the promise after assigning the IP address
+        },
+        (error) => {
+          console.error('Failed to fetch IP address:', error);
+          reject(error); // Reject the promise if there's an error
+        }
+      );
+    });
   }
 
   private generateUserId(): string {
     return 'user-' + Math.random().toString(36).substring(2, 9);
   }
 
-  public joinRoom(roomId: string, username: string): Observable<any> {
+  public joinRoom(roomId: string, username: string = this.userId): Observable<any> {
+
     return new Observable((subscriber) => {
       this.connect().then(() => {
-        this.currentRoomId = roomId;
-
         // Subscribe to room-specific messages
         const subscription = this.stompClient.subscribe(
           `/topic/room/${roomId}`,
@@ -57,16 +80,20 @@ export class WebsocketService {
         // Send join message
         const joinMessage = {
           type: 'JOIN',
-          userId: this.userId,
-          username: username,
-          roomId: roomId,
-          color: this.generateColor()
+          content : {
+            userName : username,
+            code : '',
+            roomId : roomId
+          },
+          sender : this.clientIpAddress
         };
 
         this.stompClient.publish({
           destination: `/app/room/${roomId}/join`,
           body: JSON.stringify(joinMessage)
         });
+
+        this.setupSubscriptions();
 
         // Handle unsubscribe
         return () => {
@@ -100,12 +127,7 @@ export class WebsocketService {
     );
   }
 
-  public sendMessage(roomId: string, message: any): void {
-
-    const sendUpdate = {
-      type: 'CODE_UPDATE',
-      content: message
-    }
+  private sendMessage(roomId: string, message: any): void {
 
     this.stompClient.publish({
       destination: `/app/room/${roomId}/sendMessage`,
@@ -116,7 +138,12 @@ export class WebsocketService {
   public sendCodeUpdate(roomId: string, content: string): void {
     this.sendMessage(roomId, {
       type: 'CODE_UPDATE',
-      content: content
+      content: {
+        userName : this.username,
+        code : content,
+        roomId : roomId
+      },
+      sender : this.clientIpAddress
     });
   }
 
@@ -173,7 +200,6 @@ export class WebsocketService {
         this.connectionStatusSubject.next(true);
         console.log('Connected: ' + frame);
         resolve(true);
-        this.setupSubscriptions();
       };
 
       // Set up error callback
@@ -195,6 +221,11 @@ export class WebsocketService {
   }
 
   // PUBLIC METHODS FOR COMPONENTS TO USE
+
+  //Subscribe to username
+  public getUsername(){
+    return this.userId;
+  }
 
   // Subscribe to code changes
   public onCodeUpdate(): Observable<string> {

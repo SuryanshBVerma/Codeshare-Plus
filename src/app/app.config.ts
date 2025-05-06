@@ -6,6 +6,7 @@ import { MONACO_PATH } from '@materia-ui/ngx-monaco-editor';
 
 import { routes } from './app.routes';
 import { Noir } from '../../Noir';
+import { provideHttpClient } from '@angular/common/http';
 
 export const appConfig: ApplicationConfig = {
   providers: [
@@ -20,7 +21,8 @@ export const appConfig: ApplicationConfig = {
     {
       provide: MONACO_PATH,
       useValue: 'https://unpkg.com/monaco-editor@0.44.0/min/vs'
-    }
+    },
+    provideHttpClient()
   ]
 };
 
