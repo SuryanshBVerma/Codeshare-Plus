@@ -4,6 +4,8 @@ import { FormsModule } from '@angular/forms';
 import { MonacoEditorModule } from '@materia-ui/ngx-monaco-editor';
 import { WebsocketService } from '../../services/websocket.service';
 import { LogIn, User } from 'lucide-angular';
+import * as Y from 'yjs';
+import { MonacoBinding } from 'y-monaco'; // Optional, or you can manually bind
 
 
 
@@ -24,7 +26,10 @@ export class CodeareaComponent {
   private editor: any;
   private ignoreNextUpdate = false;
   private lastCursorPosition: any;
+  private lastSelection: any;
   private username = '';
+  private ydoc = new Y.Doc();
+  private yText = this.ydoc.getText('monaco');
 
   editorOptions = {
     theme: 'vs-dark',
@@ -48,12 +53,16 @@ export class CodeareaComponent {
   onEditorInit(editor: any) {
 
     this.editor = editor;
+    const model = editor.getModel();
+    new MonacoBinding(this.yText, model, new Set([editor]), null);
 
     this.username = this.websocketService.getUsername();
 
     // Track cursor position
     this.editor.onDidChangeCursorPosition((e: any) => {
       this.lastCursorPosition = e.position;
+      this.lastSelection = this.editor.getSelection();
+      this.websocketService.sendCursorUpdate(this.roomId, this.lastCursorPosition, this.lastSelection);
     });
 
     // Listen for content changes
@@ -69,6 +78,7 @@ export class CodeareaComponent {
       // Send updated content to the server
       this.onTextChange();
     });
+
   }
 
 
@@ -106,11 +116,27 @@ export class CodeareaComponent {
   }
 
   private setupMessageListener() {
+
+    // Subscribe to room message updates
     this.websocketService.subscribeToRoom(this.roomId).subscribe({
       next: (msg) => {
-        // console.log("UPDATED MESSAGE:", msg);
-        // console.log("UPDATED MESSAGE : ", msg.content);
-        // this.updateEditorContent(msg.content);   
+        const base64Update = msg.content; // string received from server
+        const binaryString = atob(base64Update);
+        const update = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          update[i] = binaryString.charCodeAt(i);
+        }
+
+        Y.applyUpdate(this.ydoc, update);
+
+        // this.updateEditorContent(msg.content);
+      }
+    });
+
+    // Subscribe to cursor updates
+    this.websocketService.subscribeToCursors(this.roomId).subscribe({
+      next: (msg) => {
+        // console.log("CURSOR UPDATE", msg);
       }
     })
   }
@@ -121,7 +147,9 @@ export class CodeareaComponent {
     const model = this.editor.getModel();
     const oldContent = model.getValue();
 
-    if (oldContent === newContent) return;
+    if (oldContent === newContent) {
+      return;
+    }
 
     this.ignoreNextUpdate = true;
 
@@ -164,16 +192,21 @@ export class CodeareaComponent {
     const currentContent = this.editor.getValue();
     console.log('Sending content to server:', currentContent.substring(0, 50) + '...'); // Log first 50 chars
 
-    setTimeout(() => {
-      try {
-        this.websocketService.sendCodeUpdate(this.roomId, currentContent);
-      } catch (e) {
-        console.error('Error sending content:', e);
-      }
-    }, 300);
+    const update = Y.encodeStateAsUpdate(this.ydoc);
+    const base64Update = btoa(String.fromCharCode(...update)); // convert to base64 string
+    this.websocketService.sendCodeUpdate(this.roomId, base64Update);
+
+    // setTimeout(() => {
+    //   try {
+    //     this.websocketService.sendCodeUpdate(this.roomId, currentContent);
+    //   } catch (e) {
+    //     console.error('Error sending content:', e);
+    //   }
+    // }, 300);
   }
 
   ngOnDestroy() {
+    alert("called");
     this.websocketService.disconnect();
   }
 

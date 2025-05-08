@@ -3,6 +3,7 @@ import { Client, Stomp, IMessage } from '@stomp/stompjs';
 import SockJS from 'sockjs-client';
 import { BehaviorSubject, Observable } from 'rxjs';
 import { HttpClient } from '@angular/common/http'; // Import HttpClient
+import { environment } from '../../environments/environment';
 
 export interface ChatMessage {
   sender: string;
@@ -21,12 +22,12 @@ export class WebsocketService {
   private clientIpAddress: string | null = null; // Client IP address
   private currentRoomId: string | null = null;
 
-  private codeUpdateSubject = new BehaviorSubject<string>('');
+  private codeUpdateSubject = new BehaviorSubject<string>(' ');
   private roomMessagesSubject = new BehaviorSubject<any>(null);
   private connectionStatusSubject = new BehaviorSubject<boolean>(false);
 
   private stompClient: Client = new Client({
-    webSocketFactory: () => new SockJS('http://localhost:8080/ws'),
+    webSocketFactory: () => new SockJS(environment.apiUrl),
     debug: (str) => console.log('[STOMP] ' + str),
     reconnectDelay: 5000,
     heartbeatIncoming: 4000,
@@ -225,6 +226,10 @@ export class WebsocketService {
   //Subscribe to username
   public getUsername(){
     return this.userId;
+  }
+
+  public getIpAddress(){
+    return this.clientIpAddress;
   }
 
   // Subscribe to code changes
