@@ -70,23 +70,16 @@ export class WebsocketService {
 
     return new Observable((subscriber) => {
       this.connect().then(() => {
-        // Subscribe to room-specific messages
-        const subscription = this.stompClient.subscribe(
-          `/topic/room/${roomId}`,
-          (message: IMessage) => {
-            subscriber.next(JSON.parse(message.body));
-          }
-        );
 
         // Send join message
         const joinMessage = {
           type: 'JOIN',
-          content : {
-            userName : username,
-            code : '',
-            roomId : roomId
+          content: {
+            userName: username,
+            code: '',
+            roomId: roomId
           },
-          sender : this.clientIpAddress
+          sender: this.clientIpAddress
         };
 
         this.stompClient.publish({
@@ -94,40 +87,31 @@ export class WebsocketService {
           body: JSON.stringify(joinMessage)
         });
 
-        this.setupSubscriptions();
+        // Notify the subscriber that the join operation was successful
+        subscriber.next({ success: true, roomId });
+        subscriber.complete();
 
-        // Handle unsubscribe
-        return () => {
-          if (subscription) {
-            subscription.unsubscribe();
-          }
-        };
       }).catch(error => {
         subscriber.error(error);
       });
     });
   }
 
-  // Setup all subscriptions
-  private setupSubscriptions(): void {
-    if (!this.currentRoomId) return;
 
-    // Subscribe to code updates
-    this.stompClient.subscribe(
-      `/topic/room/${this.currentRoomId}`,
-      (message: IMessage) => {
-        const parsed = JSON.parse(message.body);
-        console.log('Received room message:', parsed); // Debug log
-
-        // Update appropriate subjects based on message type
-        if (parsed.type === 'CODE_UPDATE') {
-          this.codeUpdateSubject.next(parsed.content);
-        }
-        this.roomMessagesSubject.next(parsed);
-      }
-    );
+  
+  public sendCodeUpdate(roomId: string, content: string): void {
+    
+    this.sendMessage(roomId, {
+      type: 'CODE_UPDATE',
+      content: {
+        userName: this.username,
+        code: content,
+        roomId: roomId
+      },
+      sender: this.clientIpAddress
+    });
   }
-
+  
   private sendMessage(roomId: string, message: any): void {
 
     this.stompClient.publish({
@@ -136,24 +120,15 @@ export class WebsocketService {
     });
   }
 
-  public sendCodeUpdate(roomId: string, content: string): void {
-    this.sendMessage(roomId, {
-      type: 'CODE_UPDATE',
-      content: {
-        userName : this.username,
-        code : content,
-        roomId : roomId
-      },
-      sender : this.clientIpAddress
-    });
-  }
-
   public sendCursorUpdate(roomId: string, position: any, selection: any): void {
     this.stompClient.publish({
       destination: `/app/room/${roomId}/sendCursor`,
       body: JSON.stringify({
+        userId: this.userId,
+        username: this.username,
         position: position,
-        selection: selection
+        selection: selection,
+        timestamp: new Date().getTime()
       })
     });
   }
@@ -180,11 +155,6 @@ export class WebsocketService {
       );
       return () => subscription.unsubscribe();
     });
-  }
-
-  private generateColor(): string {
-    const hue = Math.floor(Math.random() * 360);
-    return `hsl(${hue}, 70%, 60%)`;
   }
 
 
@@ -224,11 +194,11 @@ export class WebsocketService {
   // PUBLIC METHODS FOR COMPONENTS TO USE
 
   //Subscribe to username
-  public getUsername(){
+  public getUsername() {
     return this.userId;
   }
 
-  public getIpAddress(){
+  public getIpAddress() {
     return this.clientIpAddress;
   }
 
@@ -245,6 +215,7 @@ export class WebsocketService {
   public getConnectionStatus(): Observable<boolean> {
     return this.connectionStatusSubject.asObservable();
   }
+
 
   // Disconnect
   public disconnect(): void {

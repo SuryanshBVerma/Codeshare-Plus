@@ -3,11 +3,15 @@ import { Component } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { MonacoEditorModule } from '@materia-ui/ngx-monaco-editor';
 import { WebsocketService } from '../../services/websocket.service';
-import { LogIn, User } from 'lucide-angular';
 import * as Y from 'yjs';
 import { MonacoBinding } from 'y-monaco'; // Optional, or you can manually bind
 
-
+interface cursorDetails {
+  decorations: string[];
+  selectionDecorations: string[];
+  color: string;
+  username: string;
+}
 
 @Component({
   standalone: true,
@@ -18,10 +22,11 @@ import { MonacoBinding } from 'y-monaco'; // Optional, or you can manually bind
     MonacoEditorModule,
   ],
   templateUrl: './codearea.component.html',
+  styles: ''
 })
 export class CodeareaComponent {
 
-  code: string = 'function x() {\nconsole.log("Hello world!");\n}';
+  code: string = '';
   roomId: string = '';
   private editor: any;
   private ignoreNextUpdate = false;
@@ -30,6 +35,9 @@ export class CodeareaComponent {
   private username = '';
   private ydoc = new Y.Doc();
   private yText = this.ydoc.getText('monaco');
+
+  private remoteCursors: Map<string, cursorDetails> = new Map();
+
 
   editorOptions = {
     theme: 'vs-dark',
@@ -44,6 +52,12 @@ export class CodeareaComponent {
     },
     hover: { enabled: false }
   };
+
+  // Utility function to validate Base64 strings
+  private isValidBase64(str: string): boolean {
+    const base64Regex = /^[A-Za-z0-9+/=]+$/;
+    return base64Regex.test(str) && str.length % 4 === 0;
+  }
 
   constructor(
     private websocketService: WebsocketService,
@@ -120,62 +134,56 @@ export class CodeareaComponent {
     // Subscribe to room message updates
     this.websocketService.subscribeToRoom(this.roomId).subscribe({
       next: (msg) => {
-        const base64Update = msg.content; // string received from server
-        const binaryString = atob(base64Update);
-        const update = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) {
-          update[i] = binaryString.charCodeAt(i);
+        if (msg.type === 'CODE_UPDATE') {
+          const base64Update = msg.content; // string received from server
+          // Validate the Base64 string
+          if (!base64Update || !this.isValidBase64(base64Update)) {
+            console.log(msg);
+            console.error('Invalid or empty Base64 string received:', base64Update);
+            return;
+          }
+
+          try {
+            const binaryString = atob(base64Update);
+            const update = new Uint8Array(binaryString.length);
+
+            for (let i = 0; i < binaryString.length; i++) {
+              update[i] = binaryString.charCodeAt(i);
+            }
+
+            Y.applyUpdate(this.ydoc, update); // Apply the received update to the Yjs document
+          } catch (error) {
+            console.error('Error decoding Base64 string:', error);
+          }
+        }else {
+          const base64Update = msg.content;
+
+          try {
+            const binaryString = atob(base64Update);
+            const update = new Uint8Array(binaryString.length);
+
+            for (let i = 0; i < binaryString.length; i++) {
+              update[i] = binaryString.charCodeAt(i);
+            }
+
+            Y.applyUpdate(this.ydoc, update); // Apply the received update to the Yjs document
+          } catch (error) {
+            // console.error('Error decoding Base64 string:', error);
+          }
+          
         }
-
-        Y.applyUpdate(this.ydoc, update);
-
-        // this.updateEditorContent(msg.content);
-      }
+      } 
     });
 
     // Subscribe to cursor updates
     this.websocketService.subscribeToCursors(this.roomId).subscribe({
       next: (msg) => {
-        // console.log("CURSOR UPDATE", msg);
+        console.log("CURSOR UPDATE");
+        this.handleRemoteCursorUpdate(msg);
       }
     })
+
   }
-
-  private updateEditorContent(newContent: string) {
-    if (!this.editor) return;
-
-    const model = this.editor.getModel();
-    const oldContent = model.getValue();
-
-    if (oldContent === newContent) {
-      return;
-    }
-
-    this.ignoreNextUpdate = true;
-
-    const fullRange = model.getFullModelRange();
-    const id = { major: 1, minor: 1 }; // Unique operation id for undo stack
-    const textEdits = [{
-      range: fullRange,
-      text: newContent,
-      forceMoveMarkers: true
-    }];
-
-    this.editor.executeEdits('remote-update', textEdits);
-
-    // Optionally trigger a model change marker for undo stack
-    this.editor.pushUndoStop();
-
-    // Restore the cursor with minimal flickering
-    setTimeout(() => {
-      if (this.lastCursorPosition) {
-        this.editor.setPosition(this.lastCursorPosition);
-        this.editor.focus();
-      }
-      this.ignoreNextUpdate = false;
-    }, 0);
-  }
-
 
 
   onTextChange() {
@@ -196,14 +204,120 @@ export class CodeareaComponent {
     const base64Update = btoa(String.fromCharCode(...update)); // convert to base64 string
     this.websocketService.sendCodeUpdate(this.roomId, base64Update);
 
-    // setTimeout(() => {
-    //   try {
-    //     this.websocketService.sendCodeUpdate(this.roomId, currentContent);
-    //   } catch (e) {
-    //     console.error('Error sending content:', e);
-    //   }
-    // }, 300);
   }
+
+  private handleRemoteCursorUpdate(update: any) {
+    // Skip our own cursor updates
+    if (update.userId === this.websocketService.getUsername()) {
+      return;
+    }
+
+    // Get or create cursor data
+    let cursorData = this.remoteCursors.get(update.userId);
+    if (!cursorData) {
+      cursorData = {
+        decorations: [],
+        selectionDecorations: [],
+        color: this.generateUserColor(update.userId),
+        username: update.username
+      };
+      this.remoteCursors.set(update.userId, cursorData);
+      this.addCursorStyle(update.userId, cursorData.color);
+    }
+
+    console.log("Remote cursor", this.remoteCursors);
+
+
+    // Update cursor position
+    this.updateRemoteCursor(update.userId, update.position, update.selection);
+  }
+
+  private generateUserColor(userId: string): string {
+    // Simple deterministic color generation based on user ID
+    const hash = Array.from(userId).reduce(
+      (hash, char) => char.charCodeAt(0) + ((hash << 5) - hash), 0
+    );
+    const h = Math.abs(hash) % 360;
+    return `hsl(${h}, 70%, 60%)`;
+  }
+
+  private addCursorStyle(userId: string, color: string): void {
+    const styleId = `cursor-style-${userId}`;
+    if (document.getElementById(styleId)) return;
+
+    const style = document.createElement('style');
+    style.id = styleId;
+    style.innerHTML = `
+      .remote-cursor-${userId} {
+        background-color: ${color};
+        width: 2px !important;
+        margin-left: -1px;
+      }
+      .remote-cursor-glyph-${userId} {
+        background-color: ${color};
+        width: 10px !important;
+        margin-left: -5px;
+      }
+      .remote-selection-${userId} {
+        background-color: ${color};
+        opacity: 0.3;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  private updateRemoteCursor(userId: string, position: any, selection: any) {
+    const cursorData = this.remoteCursors.get(userId);
+    if (!cursorData || !this.editor) return;
+
+    // Clear old decorations
+    if (cursorData.decorations.length) {
+      this.editor.deltaDecorations(cursorData.decorations, []);
+    }
+    if (cursorData.selectionDecorations.length) {
+      this.editor.deltaDecorations(cursorData.selectionDecorations, []);
+    }
+
+    // Add cursor position decoration
+    cursorData.decorations = this.editor.deltaDecorations([], [{
+      range: new monaco.Range(
+        position.lineNumber,
+        position.column,
+        position.lineNumber,
+        position.column + 1
+      ),
+      options: {
+        className: `remote-cursor-${userId}`,
+        glyphMarginClassName: `remote-cursor-glyph-${userId}`,
+        glyphMarginHoverMessage: { value: cursorData.username },
+        stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges
+      }
+    }]);
+
+    // Add selection decoration if exists
+    if (selection && !this.isSelectionEmpty(selection)) {
+      cursorData.selectionDecorations = this.editor.deltaDecorations([], [{
+        range: new monaco.Range(
+          selection.startLineNumber,
+          selection.startColumn,
+          selection.endLineNumber,
+          selection.endColumn
+        ),
+        options: {
+          className: `remote-selection-${userId}`,
+          stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges
+        }
+      }]);
+    }
+  }
+
+  private isSelectionEmpty(selection: any): boolean {
+    return (
+      selection.startLineNumber === selection.endLineNumber &&
+      selection.startColumn === selection.endColumn
+    );
+  }
+
 
   ngOnDestroy() {
     alert("called");
